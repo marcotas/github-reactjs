@@ -1,33 +1,111 @@
+/* eslint-disable camelcase */
 import React, { Component } from 'react';
-import { Link } from 'react-router-dom';
-import styled from 'styled-components';
-import { FaChevronLeft } from 'react-icons/fa';
+import parser from 'parse-link-header';
+import { FaChevronLeft, FaSpinner, FaChevronRight } from 'react-icons/fa';
 
 import api from '../../services/api';
-import { Loading } from './styles';
 import { Card } from '../../styles';
+import {
+  Loading,
+  IssueList,
+  IssueFilters,
+  Owner,
+  BackLink,
+  FilterButton,
+  IssueListPagination,
+} from './styles';
 
 export default class Repository extends Component {
   state = {
     repo: '',
     issues: [],
     loading: true,
+    loadingIssues: false,
+    filter: 'open',
+    page: 1,
+    per_page: 5,
+    lastPage: 1,
   };
 
   async componentDidMount() {
     const { match } = this.props;
+    const { per_page } = this.state;
     const repoName = decodeURIComponent(match.params.repo);
     this.setState({ loading: true });
     const [repo, issues] = await Promise.all([
       api.get(`repos/${repoName}`),
-      api.get(`repos/${repoName}/issues`, { params: { per_page: 5 } }),
+      this.fetchIssues(repoName),
     ]);
 
-    this.setState({ repo: repo.data, issues: issues.data, loading: false });
+    this.setState({ repo: repo.data, issues, loading: false });
   }
 
+  componentDidUpdate(_, prevState) {
+    const { filter, page, per_page } = this.state;
+    if (
+      prevState.filter !== filter ||
+      prevState.page !== page ||
+      prevState.per_page !== per_page
+    ) {
+      this.updateIssues();
+    }
+  }
+
+  updateIssues = async () => {
+    this.setState({ loadingIssues: true });
+    const issues = await this.fetchIssues();
+    this.setState({ issues, loadingIssues: false });
+    console.log(this.state);
+  };
+
+  fetchIssues = async (repoName = null) => {
+    try {
+      const { filter, page, per_page, repo } = this.state;
+      repoName = repoName || (repo && repo.full_name);
+      const params = {
+        state: filter,
+        page,
+        per_page,
+      };
+      const response = await api.get(`repos/${repoName}/issues`, {
+        params,
+      });
+      const pagination = parser(response.headers.link);
+      const { last } = pagination || {};
+      this.setState({ lastPage: (last && +last.page) || 1 });
+      return response.data;
+    } catch (error) {
+      console.error(error);
+      return [];
+    }
+  };
+
+  handlePerPageChange = e => {
+    this.setState({ per_page: +e.target.value, page: 1 });
+  };
+
+  prevPage = () => {
+    const { page } = this.state;
+    if (page === 1) return;
+    this.setState({ page: page - 1 });
+  };
+
+  nextPage = () => {
+    const { page } = this.state;
+    this.setState({ page: page + 1 });
+  };
+
   render() {
-    const { loading, repo, issues } = this.state;
+    const {
+      loading,
+      repo,
+      issues,
+      filter,
+      loadingIssues,
+      page,
+      lastPage,
+    } = this.state;
+
     return (
       <>
         {loading ? (
@@ -47,6 +125,30 @@ export default class Repository extends Component {
             </Owner>
 
             <IssueList>
+              <IssueFilters loading={loadingIssues ? 1 : 0}>
+                <FilterButton
+                  onClick={() => this.setState({ filter: 'all', page: 1 })}
+                  active={filter === 'all'}
+                >
+                  Todas
+                </FilterButton>
+                <FilterButton
+                  onClick={() => this.setState({ filter: 'open', page: 1 })}
+                  active={filter === 'open'}
+                >
+                  Abertas
+                </FilterButton>
+                <FilterButton
+                  onClick={() => this.setState({ filter: 'closed', page: 1 })}
+                  active={filter === 'closed'}
+                >
+                  Fechadas
+                </FilterButton>
+
+                <FaSpinner />
+                <span>Carregando...</span>
+              </IssueFilters>
+
               {issues.map(issue => (
                 <li key={String(issue.id)}>
                   <img src={issue.user.avatar_url} alt="" />
@@ -70,98 +172,41 @@ export default class Repository extends Component {
                 </li>
               ))}
             </IssueList>
+
+            <IssueListPagination>
+              <button
+                type="button"
+                disabled={page === 1}
+                onClick={this.prevPage}
+              >
+                <FaChevronLeft />
+                Anterior
+              </button>
+
+              <div>
+                <span>Por Página:</span>
+
+                <select onChange={this.handlePerPageChange}>
+                  <option value={5}>5</option>
+                  <option value={10}>10</option>
+                  <option value={25}>25</option>
+                  <option value={50}>50</option>
+                  <option value={100}>100</option>
+                </select>
+              </div>
+
+              <button
+                type="button"
+                disabled={page >= lastPage}
+                onClick={this.nextPage}
+              >
+                Próxima
+                <FaChevronRight />
+              </button>
+            </IssueListPagination>
           </Card>
         )}
       </>
     );
   }
 }
-
-const BackLink = styled(Link)`
-  display: flex;
-  align-items: center;
-  svg {
-    margin-right: 4px;
-  }
-`;
-const Owner = styled.header`
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-
-  img {
-    width: 120px;
-    border-radius: 50%;
-  }
-  a {
-    font-size: 24px;
-    font-weight: bold;
-    color: #333;
-    margin: 10px 0;
-    text-decoration: none;
-    &:hover {
-      color: #7159c1;
-    }
-  }
-  p {
-    font-size: 14px;
-    color: #999;
-    max-width: 400px;
-    text-align: center;
-  }
-`;
-
-const IssueList = styled.ul`
-  list-style: none;
-  padding-top: 30px;
-  margin-top: 30px;
-  border-top: 1px solid #eee;
-
-  li {
-    display: flex;
-    align-items: center;
-    padding: 10px;
-    border: 1px solid #eee;
-    border-radius: 16px;
-    & + li {
-      margin-top: 10px;
-    }
-
-    img {
-      margin-right: 10px;
-      width: 36px;
-      height: 36px;
-      border-radius: 50%;
-      border: 2px solid #eee;
-    }
-
-    div {
-      strong {
-        font-size: 16px;
-        a {
-          text-decoration: none;
-          line-height: 1.4;
-          color: #333;
-          &:hover {
-            color: #7159c1;
-          }
-        }
-
-        span {
-          background-color: #eee;
-          color: #333;
-          margin-left: 10px;
-          padding: 3px 8px;
-          font-size: 12px;
-          font-weight: 600;
-          height: 20px;
-          border-radius: 50rem;
-        }
-      }
-      p {
-        color: #999;
-        font-size: 14px;
-      }
-    }
-  }
-`;
